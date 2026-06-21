@@ -1,0 +1,44 @@
+name: Build bridge
+
+# Builds the Go bridge against a chosen whatsmeow version and uploads the linux-amd64 binary as an artifact.
+# Use to produce a binary with a current whatsmeow when upstream releases lag a WhatsApp client-version bump (405 "client outdated").
+
+on:
+  workflow_dispatch:
+    inputs:
+      whatsmeow_version:
+        description: whatsmeow module version (latest, a tag, or a pseudo-version)
+        required: false
+        default: latest
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+
+      - name: Bump whatsmeow and build
+        working-directory: whatsapp-bridge
+        run: |
+          go get go.mau.fi/whatsmeow@${{ inputs.whatsmeow_version }}
+          go mod tidy
+          go build -o whatsapp-bridge-linux-amd64 .
+          sha256sum whatsapp-bridge-linux-amd64 > SHA256SUMS.txt
+          echo "Built against:"
+          go list -m go.mau.fi/whatsmeow
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whatsapp-bridge-linux-amd64
+          path: |
+            whatsapp-bridge/whatsapp-bridge-linux-amd64
+            whatsapp-bridge/SHA256SUMS.txt
+            whatsapp-bridge/go.mod
+            whatsapp-bridge/go.sum
