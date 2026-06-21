@@ -1,7 +1,7 @@
 name: Build bridge
 
-# Builds the Go bridge against a chosen whatsmeow version and uploads the linux-amd64 binary as an artifact.
-# Use to produce a binary with a current whatsmeow when upstream releases lag a WhatsApp client-version bump (405 "client outdated").
+# Builds the Go bridge against a chosen whatsmeow version and publishes it as a fork release (assets: whatsapp-bridge-linux-amd64, SHA256SUMS.txt) that the salt state pulls via releases/latest/download.
+# Re-run when the bridge logs 405 "client outdated": WhatsApp raised its client-version floor and the pinned whatsmeow is too old; `latest` pulls a current one.
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ on:
         default: latest
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -25,20 +25,22 @@ jobs:
           go-version: "1.25"
 
       - name: Bump whatsmeow and build
+        id: build
         working-directory: whatsapp-bridge
         run: |
           go get go.mau.fi/whatsmeow@${{ inputs.whatsmeow_version }}
           go mod tidy
           go build -o whatsapp-bridge-linux-amd64 .
           sha256sum whatsapp-bridge-linux-amd64 > SHA256SUMS.txt
-          echo "Built against:"
-          go list -m go.mau.fi/whatsmeow
+          echo "whatsmeow=$(go list -m -f '{{.Version}}' go.mau.fi/whatsmeow)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v4
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
         with:
-          name: whatsapp-bridge-linux-amd64
-          path: |
+          tag_name: bridge-build-${{ github.run_number }}
+          name: bridge build ${{ github.run_number }} — whatsmeow ${{ steps.build.outputs.whatsmeow }}
+          body: Built from `${{ github.ref_name }}` against whatsmeow `${{ steps.build.outputs.whatsmeow }}`.
+          make_latest: "true"
+          files: |
             whatsapp-bridge/whatsapp-bridge-linux-amd64
             whatsapp-bridge/SHA256SUMS.txt
-            whatsapp-bridge/go.mod
-            whatsapp-bridge/go.sum
