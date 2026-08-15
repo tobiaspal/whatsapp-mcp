@@ -3152,7 +3152,7 @@ func main() {
 	// Create channel to track connection success
 	connected := make(chan bool, 1)
 
-	// Add connection retry logic
+	// Add connection retry logic. Every give-up path below exits non-zero: returning from main() reports success, so a supervisor (systemd Restart=on-failure, Docker restart policies, launchd KeepAlive) would treat a bridge that never connected as a clean shutdown and leave it dead — e.g. when the machine boots and the bridge starts before DNS can resolve web.whatsapp.com.
 	maxRetries := 3
 	var connErr error
 
@@ -3169,7 +3169,7 @@ func main() {
 			if connErr != nil {
 				logger.Errorf("Failed to get QR channel: %v", connErr)
 				if attempt == maxRetries {
-					return
+					os.Exit(1)
 				}
 				time.Sleep(5 * time.Second)
 				continue
@@ -3179,7 +3179,7 @@ func main() {
 			if connErr != nil {
 				logger.Errorf("Failed to connect (attempt %d): %v", attempt, connErr)
 				if attempt == maxRetries {
-					return
+					os.Exit(1)
 				}
 				time.Sleep(5 * time.Second)
 				continue
@@ -3205,7 +3205,7 @@ func main() {
 				logger.Errorf("Timeout waiting for QR code scan (attempt %d)", attempt)
 				client.Disconnect()
 				if attempt == maxRetries {
-					return
+					os.Exit(1)
 				}
 				time.Sleep(10 * time.Second)
 				continue
@@ -3216,7 +3216,7 @@ func main() {
 			if connErr != nil {
 				logger.Errorf("Failed to connect (attempt %d): %v", attempt, connErr)
 				if attempt == maxRetries {
-					return
+					os.Exit(1)
 				}
 				time.Sleep(5 * time.Second)
 				continue
@@ -3233,7 +3233,7 @@ connectionSuccess:
 
 	if !client.IsConnected() {
 		logger.Errorf("Failed to establish stable connection")
-		return
+		os.Exit(1)
 	}
 
 	fmt.Println("\n✓ Connected to WhatsApp! Type 'help' for commands.")
