@@ -952,6 +952,18 @@ func (store *MessageStore) MarkMessageDeleted(messageID, chatJID string, deleted
 	return err
 }
 
+// EditMessageContent replaces the text of a stored message with its edited
+// version, which is also all that history sync delivers for an edited
+// message. Calling this for a message that does not exist (e.g. the bridge
+// missed the original) is a silent no-op, not an error.
+func (store *MessageStore) EditMessageContent(messageID, chatJID, content string) error {
+	_, err := store.db.Exec(
+		`UPDATE messages SET content = ? WHERE id = ? AND chat_jid = ?`,
+		content, messageID, chatJID,
+	)
+	return err
+}
+
 // Get messages from a chat
 func (store *MessageStore) GetMessages(chatJID string, limit int) ([]Message, error) {
 	rows, err := store.db.Query(
@@ -1359,6 +1371,25 @@ func handleMessageRevoke(messageStore *MessageStore, msg *waProto.Message, chatJ
 	deletedAt := time.Unix(eventTimestamp, 0)
 	if err := messageStore.MarkMessageDeleted(targetID, chatJID, deletedAt); err != nil {
 		logger.Warnf("Failed to mark message %s in %s as deleted: %v", targetID, chatJID, err)
+	}
+}
+
+// handleMessageEdit replaces the stored text of an edited message with the new
+// text. whatsmeow has already unwrapped the edit envelope, so the message is
+// the MESSAGE_EDIT protocol message carrying the new content. chatJID is the
+// already-LID-normalised chat, as in handleMessageRevoke.
+func handleMessageEdit(messageStore *MessageStore, msg *waProto.Message, chatJID string, logger waLog.Logger) {
+	protoMsg := msg.GetProtocolMessage()
+	if protoMsg.GetType() != waProto.ProtocolMessage_MESSAGE_EDIT {
+		return
+	}
+	targetID := protoMsg.GetKey().GetID()
+	content := extractTextContent(protoMsg.GetEditedMessage())
+	if targetID == "" || content == "" {
+		return
+	}
+	if err := messageStore.EditMessageContent(targetID, chatJID, content); err != nil {
+		logger.Warnf("Failed to apply edit to message %s in %s: %v", targetID, chatJID, err)
 	}
 }
 
@@ -1982,6 +2013,7 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 
 	updateChatEphemeralSettingsFromProtocolMessage(messageStore, chatJID, msg.Message, msg.Info.Timestamp.Unix(), logger)
 	handleMessageRevoke(messageStore, msg.Message, chatJID, msg.Info.Timestamp.Unix(), logger)
+	handleMessageEdit(messageStore, msg.Message, chatJID, logger)
 
 	// Backfill ephemeral state from any regular message's ContextInfo.
 	// EPHEMERAL_SETTING ProtocolMessages and GroupInfo events only fire on
