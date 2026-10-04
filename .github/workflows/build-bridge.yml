@@ -22,7 +22,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version: stable # whatsmeow@latest and upstream's go directive move past any pin, and setup-go sets GOTOOLCHAIN=local, so Go can't fetch a newer toolchain itself
 
       - name: Bump whatsmeow and build
         id: build
