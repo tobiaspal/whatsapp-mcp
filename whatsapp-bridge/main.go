@@ -2145,11 +2145,13 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 			direction = "→"
 		}
 
-		// Log based on message type
+		// Log based on message type. The ID stands in for the text and the
+		// document name: logs get copied (journald, syslog, log shippers) and
+		// outlive deleting the message in WhatsApp.
 		if mediaType != "" {
-			fmt.Printf("[%s] %s %s: [%s: %s] %s\n", timestamp, direction, sender, mediaType, filename, content)
+			fmt.Printf("[%s] %s %s: [%s] %s\n", timestamp, direction, sender, mediaType, msg.Info.ID)
 		} else if content != "" {
-			fmt.Printf("[%s] %s %s: %s\n", timestamp, direction, sender, content)
+			fmt.Printf("[%s] %s %s: %s\n", timestamp, direction, sender, msg.Info.ID)
 		}
 	}
 }
@@ -3584,9 +3586,6 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 					mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength = extractMediaInfo(msg.Message.Message, timestamp, histMsgID)
 				}
 
-				// Log the message content for debugging
-				logger.Infof("Message content: %v, Media Type: %v", content, mediaType)
-
 				// Skip messages with no content and no media
 				if content == "" && mediaType == "" {
 					continue
@@ -3656,13 +3655,13 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 					logger.Warnf("Failed to store history message: %v", err)
 				} else {
 					syncedCount++
-					// Log successful message storage
+					// Log successful message storage, by ID as in handleMessage
 					if mediaType != "" {
-						logger.Infof("Stored message: [%s] %s -> %s: [%s: %s] %s",
-							msgTimestamp.Format("2006-01-02 15:04:05"), sender, chatJID, mediaType, filename, content)
+						logger.Infof("Stored message: [%s] %s -> %s: [%s] %s",
+							msgTimestamp.Format("2006-01-02 15:04:05"), sender, chatJID, mediaType, msgID)
 					} else {
 						logger.Infof("Stored message: [%s] %s -> %s: %s",
-							msgTimestamp.Format("2006-01-02 15:04:05"), sender, chatJID, content)
+							msgTimestamp.Format("2006-01-02 15:04:05"), sender, chatJID, msgID)
 					}
 				}
 			}
