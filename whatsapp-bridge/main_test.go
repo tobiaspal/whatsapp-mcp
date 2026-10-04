@@ -2024,6 +2024,41 @@ func TestHandleMessage_RevokeMarksTargetDeleted(t *testing.T) {
 	}
 }
 
+// TestHandleMessage_EditReplacesStoredText checks that a live edit, which
+// whatsmeow delivers as a MESSAGE_EDIT protocol message, replaces the text
+// of the message it edits.
+func TestHandleMessage_EditReplacesStoredText(t *testing.T) {
+	client := newTestClient(&mockLIDStore{})
+	ms := newTestMessageStore(t)
+	chatJID := phonePN.String()
+	targetID := "3A1234567890ABCDEF"
+
+	if _, err := ms.db.Exec(
+		`INSERT INTO messages (id, chat_jid, sender, content, timestamp, is_from_me)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		targetID, chatJID, phonePN.User, "original text", time.Unix(1710000000, 0), false,
+	); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	edit := revokeEvent(targetID, time.Unix(1710000060, 0))
+	edit.Message.ProtocolMessage.Type = waProto.ProtocolMessage_MESSAGE_EDIT.Enum()
+	edit.Message.ProtocolMessage.EditedMessage = &waProto.Message{Conversation: proto.String("edited text")}
+	handleMessage(client, ms, edit, testLogger())
+
+	var content string
+	if err := ms.db.QueryRow("SELECT content FROM messages WHERE id = ? AND chat_jid = ?",
+		targetID, chatJID).Scan(&content); err != nil {
+		t.Fatalf("read content: %v", err)
+	}
+	if content != "edited text" {
+		t.Fatalf("content = %q, want the edited text", content)
+	}
+	if _, deleted := readDeletedAt(t, ms, chatJID, targetID); deleted {
+		t.Fatalf("an edit must not mark the message deleted")
+	}
+}
+
 func TestHandleMessage_RevokeIsNoopForUnknownTarget(t *testing.T) {
 	client := newTestClient(&mockLIDStore{})
 	ms := newTestMessageStore(t)
