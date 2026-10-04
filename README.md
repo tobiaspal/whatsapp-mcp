@@ -790,12 +790,16 @@ curl -X POST http://127.0.0.1:8080/api/history \
 The request is anchored on the **oldest message already stored** for that chat,
 so the phone returns messages from before it. Call it repeatedly to page
 further back. Results arrive asynchronously through the normal history-sync
-handler and land in `messages.db` — typically within a few seconds.
+handler and land in `messages.db` — typically within a few seconds. To request
+a range the bridge already holds again, for example to store messages an older
+bridge version skipped, anchor on a later stored message with
+`before_message_id`.
 
 | Field | Required | Description |
 | --------- | -------- | ------------------------------------------------------ |
 | `chat_jid` | yes | Chat to backfill (`...@s.whatsapp.net` or `...@g.us`) |
 | `count` | no | Messages to request; default `50`, capped at `500` |
+| `before_message_id` | no | Anchor on this stored message instead of the oldest; `404` if it is not stored for the chat |
 
 Caveats:
 

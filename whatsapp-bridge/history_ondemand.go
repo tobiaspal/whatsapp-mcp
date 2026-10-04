@@ -34,6 +34,10 @@ import (
 type HistoryRequest struct {
 	ChatJID string `json:"chat_jid"`
 	Count   int    `json:"count,omitempty"`
+	// BeforeMessageID anchors the request on this stored message instead of
+	// the chat's oldest one, to request a range the bridge already holds
+	// again, e.g. to store what an older bridge version skipped.
+	BeforeMessageID string `json:"before_message_id,omitempty"`
 }
 
 const (
@@ -127,6 +131,26 @@ func oldestStoredMessage(store *MessageStore, chatJID string) (id string, fromMe
 	return id, fromMe, anchorTime(rawTS), nil
 }
 
+// historyAnchor returns the anchor fields for an on-demand history request:
+// the given stored message, or the chat's oldest one when none is given. It
+// returns sql.ErrNoRows when that message is not stored for the chat.
+func historyAnchor(store *MessageStore, chatJID, beforeMessageID string) (id string, fromMe bool, ts time.Time, err error) {
+	if beforeMessageID == "" {
+		return oldestStoredMessage(store, chatJID)
+	}
+	var rawTS any
+	err = store.db.QueryRow(
+		`SELECT id, is_from_me, timestamp
+		   FROM messages
+		  WHERE chat_jid = ? AND id = ?`,
+		chatJID, beforeMessageID,
+	).Scan(&id, &fromMe, &rawTS)
+	if err != nil {
+		return "", false, time.Time{}, err
+	}
+	return id, fromMe, anchorTime(rawTS), nil
+}
+
 // registerHistoryEndpoint wires POST /api/history onto an existing mux.
 func registerHistoryEndpoint(mux *http.ServeMux, auth func(http.HandlerFunc) http.HandlerFunc, client *whatsmeow.Client, messageStore *MessageStore) {
 	mux.HandleFunc("/api/history", auth(func(w http.ResponseWriter, r *http.Request) {
@@ -170,7 +194,11 @@ func registerHistoryEndpoint(mux *http.ServeMux, auth func(http.HandlerFunc) htt
 			return
 		}
 
-		id, fromMe, ts, err := oldestStoredMessage(messageStore, req.ChatJID)
+		id, fromMe, ts, err := historyAnchor(messageStore, req.ChatJID, req.BeforeMessageID)
+		if errors.Is(err, sql.ErrNoRows) && req.BeforeMessageID != "" {
+			writeErr(http.StatusNotFound, "before_message_id is not a stored message of this chat")
+			return
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			writeErr(http.StatusNotFound,
 				"No stored message for this chat to anchor the request; send or receive one message first")
