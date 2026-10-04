@@ -1,6 +1,8 @@
 package main
 
 import (
+	"database/sql"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -115,6 +117,40 @@ func TestHistoryAnchorInfo(t *testing.T) {
 }
 
 // TestHistoryEndpointValidation exercises the handler's own request validation.
+// TestHistoryAnchor checks that before_message_id selects the given stored
+// message and that the chat's oldest message stays the default.
+func TestHistoryAnchor(t *testing.T) {
+	ms := newTestMessageStore(t)
+	chat := "15552223333@s.whatsapp.net"
+	base := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	for i, id := range []string{"oldest", "middle", "newest"} {
+		if err := ms.StoreMessage(id, chat, "15552223333", "text", base.Add(time.Duration(i)*time.Hour), i == 1,
+			"", "", "", nil, nil, nil, 0, ""); err != nil {
+			t.Fatalf("StoreMessage(%s): %v", id, err)
+		}
+	}
+
+	cases := []struct {
+		before     string
+		wantID     string
+		wantFromMe bool
+		wantTS     time.Time
+	}{
+		{"", "oldest", false, base},
+		{"middle", "middle", true, base.Add(time.Hour)},
+	}
+	for _, tc := range cases {
+		id, fromMe, ts, err := historyAnchor(ms, chat, tc.before)
+		if err != nil || id != tc.wantID || fromMe != tc.wantFromMe || !ts.Equal(tc.wantTS) {
+			t.Errorf("historyAnchor(%q) = (%q, %v, %v, %v), want (%q, %v, %v)",
+				tc.before, id, fromMe, ts, err, tc.wantID, tc.wantFromMe, tc.wantTS)
+		}
+	}
+	if _, _, _, err := historyAnchor(ms, chat, "missing"); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("historyAnchor(missing) error = %v, want sql.ErrNoRows", err)
+	}
+}
+
 // The real auth wrapper is covered by auth_test.go, so an identity wrapper is
 // used here. A nil client is sufficient: each of these paths returns at or
 // before the connection check, and Client.IsConnected is nil-safe (returns
