@@ -1083,6 +1083,79 @@ func TestHandleHistorySync_LIDParticipant_ResolvedViaStore(t *testing.T) {
 	}
 }
 
+// TestHandleHistorySync_EditsWrappersAndVideoNotes covers history messages the
+// handler used to skip: an edit, which history carries in place of the edited
+// message, an animated sticker, a captioned album photo and a video note.
+func TestHandleHistorySync_EditsWrappersAndVideoNotes(t *testing.T) {
+	chatJID := phonePN.String()
+	client := newTestClientWithSelf(&mockLIDStore{}, selfPhone)
+	ms := newTestMessageStore(t)
+
+	now := uint64(time.Now().Unix())
+	historyMsg := func(id string, message *waProto.Message) *waProto.HistorySyncMsg {
+		return &waProto.HistorySyncMsg{
+			Message: &waProto.WebMessageInfo{
+				Key: &waCommon.MessageKey{
+					ID:        proto.String(id),
+					FromMe:    proto.Bool(false),
+					RemoteJID: proto.String(chatJID),
+				},
+				MessageTimestamp: proto.Uint64(now),
+				Message:          message,
+			},
+		}
+	}
+	url := proto.String("https://mmg.whatsapp.net/v/t62.7118-24/media.enc")
+	historySync := &events.HistorySync{
+		Data: &waProto.HistorySync{
+			SyncType: waProto.HistorySync_ON_DEMAND.Enum(),
+			Conversations: []*waProto.Conversation{
+				{
+					ID: proto.String(chatJID),
+					Messages: []*waProto.HistorySyncMsg{
+						historyMsg("edit-001", &waProto.Message{
+							ProtocolMessage: &waProto.ProtocolMessage{
+								Type:          waProto.ProtocolMessage_MESSAGE_EDIT.Enum(),
+								Key:           &waCommon.MessageKey{ID: proto.String("original-001")},
+								EditedMessage: &waProto.Message{Conversation: proto.String("edited text")},
+							},
+						}),
+						historyMsg("lottie-001", &waProto.Message{
+							LottieStickerMessage: &waProto.FutureProofMessage{
+								Message: &waProto.Message{StickerMessage: &waProto.StickerMessage{URL: url}},
+							},
+						}),
+						historyMsg("album-child-001", &waProto.Message{
+							AssociatedChildMessage: &waProto.FutureProofMessage{
+								Message: &waProto.Message{ImageMessage: &waProto.ImageMessage{URL: url, Caption: proto.String("album photo")}},
+							},
+						}),
+						historyMsg("ptv-001", &waProto.Message{PtvMessage: &waProto.VideoMessage{URL: url}}),
+					},
+				},
+			},
+		},
+	}
+
+	handleHistorySync(client, ms, historySync, testLogger())
+
+	for _, want := range []struct{ id, mediaType, content string }{
+		{"original-001", "", "edited text"},
+		{"lottie-001", "sticker", ""},
+		{"album-child-001", "image", "album photo"},
+		{"ptv-001", "video", ""},
+	} {
+		var mediaType, content string
+		if err := ms.db.QueryRow(`SELECT media_type, content FROM messages WHERE id = ?`, want.id).Scan(&mediaType, &content); err != nil {
+			t.Errorf("message %s not stored: %v", want.id, err)
+			continue
+		}
+		if mediaType != want.mediaType || content != want.content {
+			t.Errorf("message %s = (%q, %q), want (%q, %q)", want.id, mediaType, content, want.mediaType, want.content)
+		}
+	}
+}
+
 func TestMigrateLegacyLIDChatsToPhoneJIDs_MigratesAndIsIdempotent(t *testing.T) {
 	ms := newTestMessageStore(t)
 	logger := testLogger()
