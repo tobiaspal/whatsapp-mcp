@@ -2331,8 +2331,18 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 		MediaType:     waMediaType,
 	}
 
-	// Download the media using whatsmeow client
+	// Download the media using whatsmeow client; once the link has expired,
+	// ask the phone to upload the file again (see media_retry.go)
 	mediaData, err := downloadMediaData(client, downloader)
+	if mediaExpired(err) {
+		fmt.Printf("Media link of message %s expired, asking the phone to upload it again...\n", messageID)
+		var info *types.MessageInfo
+		if info, err = storedMessageInfo(messageStore, messageID, chatJID); err == nil {
+			if downloader.DirectPath, err = requestMediaReupload(client, info, mediaKey); err == nil {
+				mediaData, err = downloadMediaData(client, downloader)
+			}
+		}
+	}
 	if err != nil {
 		return false, "", "", "", fmt.Errorf("failed to download media: %v", err)
 	}
@@ -3026,6 +3036,10 @@ func main() {
 		case *events.HistorySync:
 			// Process history sync events
 			handleHistorySync(client, messageStore, v, logger)
+
+		case *events.MediaRetry:
+			// The phone's answer to a media retry receipt (see media_retry.go)
+			handleMediaRetry(v)
 
 		case *events.Receipt:
 			// Persist read state so consumers can distinguish genuine unread
