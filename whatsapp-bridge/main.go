@@ -1770,6 +1770,12 @@ func extractMediaInfo(msg *waProto.Message, msgTimestamp time.Time, msgID string
 			vid.GetURL(), vid.GetMediaKey(), vid.GetFileSHA256(), vid.GetFileEncSHA256(), vid.GetFileLength()
 	}
 
+	// Round video notes (PTV) are VideoMessages in their own field
+	if ptv := msg.GetPtvMessage(); ptv != nil {
+		return "video", "video_" + suffix + ".mp4",
+			ptv.GetURL(), ptv.GetMediaKey(), ptv.GetFileSHA256(), ptv.GetFileEncSHA256(), ptv.GetFileLength()
+	}
+
 	// Check for audio message
 	if aud := msg.GetAudioMessage(); aud != nil {
 		return "audio", "audio_" + suffix + ".ogg",
@@ -3562,29 +3568,24 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 					continue
 				}
 
-				// Extract text content
-				var content string
-				if msg.Message.Message != nil {
-					if conv := msg.Message.Message.GetConversation(); conv != "" {
-						content = conv
-					} else if ext := msg.Message.Message.GetExtendedTextMessage(); ext != nil {
-						content = ext.GetText()
-					}
+				// ParseWebMessage is whatsmeow's reader for history messages: it
+				// unwraps wrappers such as animated stickers and disappearing
+				// messages, and turns an edit, which history carries in place of
+				// the edited message, back into that message with its new text.
+				// Album photos and videos stay wrapped in associatedChildMessage.
+				histMsgID := msg.Message.GetKey().GetID()
+				message := msg.Message.GetMessage()
+				if evt, perr := client.ParseWebMessage(jid, msg.Message); perr == nil {
+					histMsgID, message = evt.Info.ID, evt.Message
+				}
+				if child := message.GetAssociatedChildMessage().GetMessage(); child != nil {
+					message = child
 				}
 
-				// Extract media info - pass message timestamp + ID for unique filenames
-				var mediaType, filename, url string
-				var mediaKey, fileSHA256, fileEncSHA256 []byte
-				var fileLength uint64
-
-				histMsgID := ""
-				if msg.Message != nil && msg.Message.Key != nil && msg.Message.Key.ID != nil {
-					histMsgID = *msg.Message.Key.ID
-				}
-
-				if msg.Message.Message != nil {
-					mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength = extractMediaInfo(msg.Message.Message, timestamp, histMsgID)
-				}
+				// Extract text and media as for live messages, including
+				// captions - pass message timestamp + ID for unique filenames
+				content := extractTextContent(message)
+				mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength := extractMediaInfo(message, timestamp, histMsgID)
 
 				// Skip messages with no content and no media
 				if content == "" && mediaType == "" {
@@ -3622,11 +3623,8 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 					sender = jid.User
 				}
 
-				// Store message
-				msgID := ""
-				if msg.Message.Key != nil && msg.Message.Key.ID != nil {
-					msgID = *msg.Message.Key.ID
-				}
+				// Store message; an edit lands on the message it edited
+				msgID := histMsgID
 
 				// Get message timestamp
 				ts := msg.Message.GetMessageTimestamp()
